@@ -1,0 +1,389 @@
+#!/usr/bin/env python
+# Python libs
+import sys, time
+import socket
+import json
+# numpy and scipy
+import numpy as np
+# OpenCV
+import cv2
+#matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+#user module
+from fillter import get_processed_img
+from nhan_dien_duong_line import find_2_first_points, find_start_point, find_line_2, find_point_in_line, find_1_first_point
+from algorithm import quickSort_y, do_lech_line , remove_X
+from midpoint import find_mid_points, caculate_angle_mid_point, get_Speed_angle
+
+def jsonToString(speed, angle):
+    jsonObject = {'speed': speed,
+    'angle': angle,
+    }
+
+    jsonString = json.dumps(jsonObject)
+    print(jsonString)
+    return jsonString
+
+port = 9999
+ip = str(sys.argv[1])
+
+if __name__ == '__main__':
+	try:
+		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		sock.connect((ip , port))
+		print("Connected to ", ip, ":", port)
+
+		## image processing here
+	except Exception as ex:
+		print(ex)
+		sys.exit()
+	while True:
+		try:
+			img=cv2.imread('/home/chaa/UIT_Car2019/UIT_CAR/Unity_UITCar/theFxUITCar_Data/Snapshots/fx_UIT_Car.png')
+
+			img = cv2.resize(img,(320,240))
+
+			#lay cac anh da duoc xu li (dang binary)
+			res_binary,roi_binary,eyeBird_binary,_=get_processed_img(img)
+
+			img_heigh = eyeBird_binary.shape[0]
+			img_width = eyeBird_binary.shape[1]
+
+			half_bottom_histogram = np.sum(eyeBird_binary[135:,:], axis=0)
+			
+			leftPoint, rightPoint = find_2_first_points (half_bottom_histogram, range_search=256, distance_2Points=30, length_arr=320, windowLength_line=8, windowLength_empty=30, step=2, threshold_empty=3, threshold_line=20)
+			startLeft = None
+			startRight = None
+			if (leftPoint is not None):
+				startLeft = find_start_point (eyeBird_binary, left_or_right=0, startX=leftPoint, bottonY=240, topY=135, heigh=15, threshold_line=13, windowLength_line=8, threshold_empty=5, windowLength_empty=20)
+			if (rightPoint is not None):
+				startRight = find_start_point (eyeBird_binary, left_or_right=1, startX=rightPoint, bottonY=240, topY=135, heigh=15, threshold_line=13, windowLength_line=8, threshold_empty=5, windowLength_empty=20)
+			
+			eyeBird_binary_img=np.dstack((eyeBird_binary, eyeBird_binary, eyeBird_binary))*255
+
+			pointsRight=None
+			
+			if startRight is not None:
+				preX=startRight[0]
+				preY=startRight[1]
+				pointsRight=np.array([[startRight[0],startRight[1]]])
+				break_exter = False
+				while (preX>15 and preX<305 and preY>10 and preY <230):
+					pointsRightUp=find_line_2(eyeBird_binary, left_or_right=1, up_or_down=0, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+					if pointsRightUp is not None:
+						pointsRight=np.append(pointsRight, pointsRightUp, axis=0)
+						preX=pointsRight[pointsRight.shape[0]-1][0]
+						preY=pointsRight[pointsRight.shape[0]-1][1]
+					for i in range(3):
+						sub_his=np.sum(eyeBird_binary[preY:preY+10+1,:], axis=0)
+						x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=1, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+						if (x!=-1):
+							coo=np.array([[x,preY]])
+							pointsRight=np.append(pointsRight, coo, axis=0)
+							preX=x
+							preY-=10
+							break
+						preY-=10
+						if (preY<=10):
+							break
+						if(i==2):
+							break_exter=True
+							break
+					if break_exter:
+						break
+
+				preX=startRight[0]
+				preY=startRight[1]
+				break_exter=False
+				while (preX>15 and preX<305 and preY>10 and preY <230):
+					pointsRightDown=find_line_2(eyeBird_binary, left_or_right=1, up_or_down=1, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+					if pointsRightDown is not None:
+						pointsRight=np.append(pointsRight, pointsRightDown, axis=0)
+						preX=pointsRight[pointsRight.shape[0]-1][0]
+						preY=pointsRight[pointsRight.shape[0]-1][1]
+					for i in range(3):
+						sub_his=np.sum(eyeBird_binary[preY:preY+11,:], axis=0)
+						x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=1, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+						if (x!=-1):
+							coo=np.array([[x,preY]])
+							pointsRight=np.append(pointsRight, coo, axis=0)
+							preX=x
+							preY+=10
+							break
+						preY+=10
+						if (preY>=230):
+							break
+						if(i==2):
+							break_exter=True
+							break
+					if break_exter:
+						break
+
+			if pointsRight is not None:
+				quickSort_y(pointsRight, 0, pointsRight.shape[0]-1)
+				#loc nhieu cho line phai o day
+				pointsRight=remove_X(pointsRight, 1)
+				for point in pointsRight:
+					cv2.circle(eyeBird_binary_img,(point[0],point[1]), 3, (0,255,0), -1)
+			
+
+			pointsLeft=None
+			
+			if startLeft is not None:
+				preX=startLeft[0]
+				preY=startLeft[1]
+				pointsLeft=np.array([[startLeft[0],startLeft[1]]])
+				break_exter=False
+				while (preX>15 and preX<305 and preY>10 and preY <230):
+					pointsLeftUp=find_line_2(eyeBird_binary, left_or_right=0, up_or_down=0, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+					if pointsLeftUp is not None:
+						pointsLeft=np.append(pointsLeft, pointsLeftUp, axis=0)
+						preX=pointsLeft[pointsLeft.shape[0]-1][0]
+						preY=pointsLeft[pointsLeft.shape[0]-1][1]
+					for i in range(3):
+						sub_his=np.sum(eyeBird_binary[preY:preY+10+1,:], axis=0)
+						x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=0, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+						if (x!=-1):
+							coo=np.array([[x,preY]])
+							pointsLeft=np.append(pointsLeft, coo, axis=0)
+							preX=x
+							preY-=10
+							break
+						preY-=10
+						if (preY<=10):
+							break
+						if(i==2):
+							break_exter=True
+							break
+					if break_exter:
+						break
+
+				preX=startLeft[0]
+				preY=startLeft[1]
+				break_exter=False
+				while (preX>15 and preX<305 and preY>10 and preY <230):
+					pointsLeftDown=find_line_2(eyeBird_binary, left_or_right=0, up_or_down=1, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+					if pointsLeftDown is not None:
+						pointsLeft=np.append(pointsLeft, pointsLeftDown, axis=0)
+						preX=pointsLeft[pointsLeft.shape[0]-1][0]
+						preY=pointsLeft[pointsLeft.shape[0]-1][1]
+					for i in range(3):
+						sub_his=np.sum(eyeBird_binary[preY:preY+11,:], axis=0)
+						x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=0, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+						if (x!=-1):
+							coo=np.array([[x,preY]])
+							pointsLeft=np.append(pointsLeft, coo, axis=0)
+							preX=x
+							preY+=10
+							break
+						preY+=10
+						if (preY>=230):
+							break
+						if(i==2):
+							break_exter=True
+							break
+					if break_exter:
+						break
+			
+			if pointsLeft is not None:
+				quickSort_y(pointsLeft, 0, pointsLeft.shape[0]-1)
+				#loc nhieu cho line phai o day
+				pointsLeft=remove_X(pointsLeft, 0)
+				for point in pointsLeft:
+					cv2.circle(eyeBird_binary_img,(point[0],point[1]), 3, (0,0,255), -1)
+
+			if pointsLeft is not None and pointsRight is not None:
+				pointsMid=find_mid_points (pointsLeft, pointsRight, thresholdVertical=17, thresholdHorizontal=17, limit_distance=180)
+				if pointsMid is not None:
+					quickSort_y(pointsMid, 0, pointsMid.shape[0]-1)
+					pointsMid=remove_X(pointsMid, 3)
+					a = caculate_angle_mid_point (320,240,pointsMid[0],3)
+					do_lech=float(do_lech_line(pointsMid)/pointsMid.shape[0])
+					angle=0
+					speed=0
+					speed,angle = get_Speed_angle(do_lech)
+					angle+=a
+					message = jsonToString(speed, angle)
+					#message = "Hello World"
+					arr = bytes(message, 'ascii')
+					sock.sendall(arr)
+					for point in pointsMid:
+						cv2.circle(eyeBird_binary_img,(point[0],point[1]), 3, (255,0,0), -1)
+			else:
+				#detect one line here
+				sub = np.sum(eyeBird_binary[210:,:], axis=0)
+				first_1_point_right,_ = find_1_first_point (sub, startPos=160, endPos=310, left_or_right=1, windowLength_line=8, windowLength_empty=20, step=2, threshold_empty=15, threshold_line=20)
+				if first_1_point_right is not None:
+					startRight = find_start_point (eyeBird_binary, left_or_right=1, startX=first_1_point_right, bottonY=240, topY=210, heigh=10, threshold_line=13, windowLength_line=8, threshold_empty=5, windowLength_empty=20)
+				
+					pointsRight=None
+				
+					if startRight is not None:
+						preX=startRight[0]
+						preY=startRight[1]
+						pointsRight=np.array([[startRight[0],startRight[1]]])
+						break_exter = False
+						while (preX>15 and preX<305 and preY>10 and preY <230):
+							pointsRightUp=find_line_2(eyeBird_binary, left_or_right=1, up_or_down=0, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+							if pointsRightUp is not None:
+								pointsRight=np.append(pointsRight, pointsRightUp, axis=0)
+								preX=pointsRight[pointsRight.shape[0]-1][0]
+								preY=pointsRight[pointsRight.shape[0]-1][1]
+							for i in range(3):
+								sub_his=np.sum(eyeBird_binary[preY:preY+10+1,:], axis=0)
+								x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=1, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+								if (x!=-1):
+									coo=np.array([[x,preY]])
+									pointsRight=np.append(pointsRight, coo, axis=0)
+									preX=x
+									preY-=10
+									break
+								preY-=10
+								if (preY<=10):
+									break
+								if(i==2):
+									break_exter=True
+									break
+							if break_exter:
+								break
+
+						preX=startRight[0]
+						preY=startRight[1]
+						break_exter=False
+						while (preX>15 and preX<305 and preY>10 and preY <230):
+							pointsRightDown=find_line_2(eyeBird_binary, left_or_right=1, up_or_down=1, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+							if pointsRightDown is not None:
+								pointsRight=np.append(pointsRight, pointsRightDown, axis=0)
+								preX=pointsRight[pointsRight.shape[0]-1][0]
+								preY=pointsRight[pointsRight.shape[0]-1][1]
+							for i in range(3):
+								sub_his=np.sum(eyeBird_binary[preY:preY+11,:], axis=0)
+								x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=1, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+								if (x!=-1):
+									coo=np.array([[x,preY]])
+									pointsRight=np.append(pointsRight, coo, axis=0)
+									preX=x
+									preY+=10
+									break
+								preY+=10
+								if (preY>=230):
+									break
+								if(i==2):
+									break_exter=True
+									break
+							if break_exter:
+								break
+
+					if pointsRight is not None:
+						quickSort_y(pointsRight, 0, pointsRight.shape[0]-1)
+						#loc nhieu cho line phai o day
+						pointsRight=remove_X(pointsRight, 1)
+						mid=np.array([pointsRight[0][0],pointsRight[0][1]])
+						mid[0]-=95
+						a=caculate_angle_mid_point (320,240,mid,3)
+						do_lech=float(do_lech_line(pointsRight)/pointsRight.shape[0])
+						angle=0
+						speed=0
+						speed,angle = get_Speed_angle(do_lech)
+						angle+=a
+						message = jsonToString(speed, angle)
+						#message = "Hello World"
+						arr = bytes(message, 'ascii')
+						sock.sendall(arr)
+						for point in pointsRight:
+							cv2.circle(eyeBird_binary_img,(point[0],point[1]), 3, (0,255,0), -1)
+				else:
+					first_1_point_left,_ = find_1_first_point (sub, startPos=0, endPos=160, left_or_right=0, windowLength_line=8, windowLength_empty=20, step=2, threshold_empty=15, threshold_line=20)
+					if(first_1_point_left is not None):
+						startLeft = find_start_point (eyeBird_binary, left_or_right=0, startX=first_1_point_left, bottonY=240, topY=210, heigh=10, threshold_line=13, windowLength_line=8, threshold_empty=5, windowLength_empty=20)
+						pointsLeft=None
+			
+						if startLeft is not None:
+							preX=startLeft[0]
+							preY=startLeft[1]
+							pointsLeft=np.array([[startLeft[0],startLeft[1]]])
+							break_exter=False
+							while (preX>15 and preX<305 and preY>10 and preY <230):
+								pointsLeftUp=find_line_2(eyeBird_binary, left_or_right=0, up_or_down=0, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+								if pointsLeftUp is not None:
+									pointsLeft=np.append(pointsLeft, pointsLeftUp, axis=0)
+									preX=pointsLeft[pointsLeft.shape[0]-1][0]
+									preY=pointsLeft[pointsLeft.shape[0]-1][1]
+								for i in range(3):
+									sub_his=np.sum(eyeBird_binary[preY:preY+10+1,:], axis=0)
+									x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=0, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+									if (x!=-1):
+										coo=np.array([[x,preY]])
+										pointsLeft=np.append(pointsLeft, coo, axis=0)
+										preX=x
+										preY-=10
+										break
+									preY-=10
+									if (preY<=10):
+										break
+									if(i==2):
+										break_exter=True
+										break
+								if break_exter:
+									break
+
+							preX=startLeft[0]
+							preY=startLeft[1]
+							break_exter=False
+							while (preX>15 and preX<305 and preY>10 and preY <230):
+								pointsLeftDown=find_line_2(eyeBird_binary, left_or_right=0, up_or_down=1, startPos=np.array([preX,preY]), heigh=10, rangeSearch=30, step=2, threshold_line=15, windowLength_line=10, threshold_empty=30, windowLength_empty=70)
+								if pointsLeftDown is not None:
+									pointsLeft=np.append(pointsLeft, pointsLeftDown, axis=0)
+									preX=pointsLeft[pointsLeft.shape[0]-1][0]
+									preY=pointsLeft[pointsLeft.shape[0]-1][1]
+								for i in range(3):
+									sub_his=np.sum(eyeBird_binary[preY:preY+11,:], axis=0)
+									x = find_point_in_line (arr=sub_his,start_point=preX, left_or_right=0, step=1, distance_2Points=25, threshold_line=15, windowLength_line=10, threshold_empty=15, windowLength_empty=50)
+									if (x!=-1):
+										coo=np.array([[x,preY]])
+										pointsLeft=np.append(pointsLeft, coo, axis=0)
+										preX=x
+										preY+=10
+										break
+									preY+=10
+									if (preY>=230):
+										break
+									if(i==2):
+										break_exter=True
+										break
+								if break_exter:
+									break
+						
+						if pointsLeft is not None:
+							quickSort_y(pointsLeft, 0, pointsLeft.shape[0]-1)
+							#loc nhieu cho line phai o day
+							pointsLeft=remove_X(pointsLeft, 0)
+							mid=np.array([pointsLeft[0][0],pointsLeft[0][1]])
+							mid[0]-=95
+							a=caculate_angle_mid_point (320,240,mid,3)
+							do_lech=float(do_lech_line(pointsLeft)/pointsLeft.shape[0])
+							angle=0
+							speed=0
+							speed,angle = get_Speed_angle(do_lech)
+							angle+=a
+							message = jsonToString(speed, angle)
+							#message = "Hello World"
+							arr = bytes(message, 'ascii')
+							sock.sendall(arr)
+							for point in pointsLeft:
+								cv2.circle(eyeBird_binary_img,(point[0],point[1]), 3, (0,0,255), -1)
+			#phan nay cho hien thi anh ra, 1*255
+			# binary_img=np.dstack((res_binary, res_binary, res_binary))*255
+
+			# roi_binary_img=np.dstack((roi_binary, roi_binary, roi_binary))*255
+
+			#show anh
+			cv2.imshow('line_detect',eyeBird_binary_img)
+			
+			# plt.imshow(eyeBird_binary_img)
+			# plt.show()
+
+			cv2.waitKey(1)
+		except Exception as ex:
+			pass
